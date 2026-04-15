@@ -1,0 +1,898 @@
+#!/bin/bash
+# setup: macOS setup script
+# Usage:
+#   curl -fsSL rojilab.github.io/dotfiles/setup | bash
+#   bash ~/git/dotfiles/setup
+#   bash setup full     (+ brew + Thunderbird/Stylus)
+#   bash setup full -a  (+ admin packages, requires sudo)
+#   bash setup full -x  (+ extended packages)
+#
+# bash 3.2+ compatible (macOS default)
+
+DROPBOX="$HOME/Dropbox"
+SYSTEM="$DROPBOX/System"
+CONF="$SYSTEM/conf"
+
+# ============================================================ Helpers
+
+log() { echo ">>> $*"; }
+
+# defaults should_be: 現在値と異なる場合のみ書き込む
+# 戻り値: 0=変更あり, 1=変更なし
+defaults_should_be() {
+  local domain="$1" key="$2" val="$3"
+  local current
+  current=$(defaults read "$domain" "$key" 2>/dev/null) || current=""
+  if [ "$current" = "$val" ]; then
+    return 1
+  fi
+  case "$val" in
+    true)  defaults write "$domain" "$key" -bool yes ;;
+    false) defaults write "$domain" "$key" -bool no ;;
+    [0-9]*) defaults write "$domain" "$key" -int "$val" ;;
+    *)     defaults write "$domain" "$key" -string "$val" ;;
+  esac
+  echo "  $domain $key: $current -> $val"
+  return 0
+}
+
+# symlink作成: 既存ファイルがあればバックアップ
+ensure_symlink() {
+  local name="$1" target="$2"
+  if [ -L "$HOME/$name" ]; then
+    return
+  elif [ -e "$HOME/$name" ]; then
+    mv "$HOME/$name" "$HOME/${name}.bak"
+    echo "  backed up: $name -> ${name}.bak"
+  fi
+  ln -s "$target" "$HOME/$name"
+  echo "  symlink: $name -> $target"
+}
+
+# ============================================================ 1. Homebrew
+
+install_homebrew() {
+  if command -v brew &>/dev/null; then
+    log "Homebrew: already installed"
+  else
+    log "Installing Homebrew..."
+    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    echo >> "$HOME/.zprofile"
+    echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> "$HOME/.zprofile"
+    eval "$(/opt/homebrew/bin/brew shellenv)"
+  fi
+}
+
+# ============================================================ 2. Dropbox
+
+install_dropbox() {
+  if [ -d "$DROPBOX" ]; then
+    log "Dropbox: already synced"
+    return 0
+  fi
+  log "Installing Dropbox..."
+  brew install --cask dropbox
+  cat <<'MSG'
+
+  Dropboxを起動してログインしてください:
+  1. Dropbox.app を開く
+  2. ログイン
+  3. アクセシビリティを許可
+  4. すべて同期する
+
+  ┌─────────────────────────────────────────────────────┐
+  │  ★★★ 最重要 ★★★                                    │
+  │                                                     │
+  │  Dropbox → 設定 → 同期 →                            │
+  │  「Dropbox on File Provider」のオプトアウトをcheck   │
+  │                                                     │
+  │  これを忘れると Finder のパス構造が変わり、          │
+  │  すべてのシンボリックリンクが壊れます！              │
+  └─────────────────────────────────────────────────────┘
+
+  6. ~/Dropbox/System を右クリック → オフラインアクセスを許可
+
+MSG
+  open /Applications/Dropbox.app
+  read -rp "  Dropbox設定が完了したらEnterを押してください..."
+
+  if [ ! -d "$SYSTEM/bin" ]; then
+    echo "  ~/Dropbox/System がまだ同期されていません。"
+    echo "  同期を待ってから再実行してください。"
+    exit 1
+  fi
+}
+
+wait_for_system() {
+  if [ ! -d "$SYSTEM/bin" ]; then
+    echo "  ~/Dropbox/System がまだ同期されていません。"
+    echo "  Dropboxの同期を待ってから再実行してください。"
+    exit 1
+  fi
+}
+
+# ============================================================ 3. Symlinks
+
+create_symlinks() {
+  log "Creating symlinks..."
+  cd "$HOME"
+
+  # ~/直下のsymlinks (name:target)
+  for pair in \
+    "doc:Dropbox/Documents" \
+    "dev:Dropbox/dev" \
+    "System:Dropbox/System" \
+    ".gitconfig:Dropbox/System/conf/.gitconfig" \
+    ".screenrc:Dropbox/System/conf/.screenrc" \
+    ".skk:Dropbox/System/conf/.skk" \
+    ".tmux.conf:Dropbox/System/conf/.tmux.conf" \
+    ".zprofile:Dropbox/System/conf/.zprofile" \
+    ".zshrc:Dropbox/System/conf/.zshrc"; do
+    ensure_symlink "${pair%%:*}" "${pair#*:}"
+  done
+
+  # .skk-jisyo はコピー（ローカル辞書 + 定期マージ方式）
+  [ -e "$HOME/.skk-jisyo" ] || cp "$CONF/.skk-jisyo" "$HOME/.skk-jisyo"
+
+  # .emacs.d/init.el （サブディレクトリなので ../Dropbox/... が必要）
+  mkdir -p "$HOME/.emacs.d"
+  if [ ! -L "$HOME/.emacs.d/init.el" ]; then
+    [ -e "$HOME/.emacs.d/init.el" ] && mv "$HOME/.emacs.d/init.el" "$HOME/.emacs.d/init.el.bak"
+    ln -s "../Dropbox/System/conf/init.el" "$HOME/.emacs.d/init.el"
+    echo "  symlink: .emacs.d/init.el"
+  fi
+
+  # .claude/ (CLAUDE.md, settings.json, hooks)
+  mkdir -p "$HOME/.claude"
+  for pair in \
+    "CLAUDE.md:../Dropbox/System/conf/.claude/CLAUDE.md" \
+    "settings.json:../Dropbox/System/conf/.claude/settings.json" \
+    "hooks:../Dropbox/System/conf/.claude/hooks"; do
+    local name="${pair%%:*}"
+    local target="${pair#*:}"
+    if [ ! -L "$HOME/.claude/$name" ]; then
+      [ -e "$HOME/.claude/$name" ] && mv "$HOME/.claude/$name" "$HOME/.claude/${name}.bak"
+      ln -s "$target" "$HOME/.claude/$name"
+      echo "  symlink: .claude/$name"
+    fi
+  done
+
+  # .ssh
+  mkdir -p "$HOME/.ssh"
+  chmod 700 "$HOME/.ssh"
+  if [ ! -L "$HOME/.ssh/config" ]; then
+    [ -e "$HOME/.ssh/config" ] && mv "$HOME/.ssh/config" "$HOME/.ssh/config.bak"
+    ln -s "../Dropbox/System/conf/.ssh/config" "$HOME/.ssh/config"
+    echo "  symlink: .ssh/config"
+  fi
+
+  # SSH鍵をDropboxからコピー（存在しない場合のみ）
+  for keyfile in id_ed25519 id_ed25519.pub; do
+    if [ ! -f "$HOME/.ssh/$keyfile" ] && [ -f "$CONF/.ssh/$keyfile" ]; then
+      cp "$CONF/.ssh/$keyfile" "$HOME/.ssh/$keyfile"
+      echo "  copied: .ssh/$keyfile"
+    fi
+  done
+  [ -f "$HOME/.ssh/id_ed25519" ] && chmod 600 "$HOME/.ssh/id_ed25519"
+  [ -f "$HOME/.ssh/id_dsa" ] && chmod 600 "$HOME/.ssh/id_dsa"
+
+  log "Symlinks done"
+}
+
+# ============================================================ 4. macOS Defaults
+
+set_macos_defaults() {
+  log "Setting macOS defaults..."
+  local changed=0
+
+  # --- Global ---
+  defaults_should_be -g KeyRepeat 2
+  defaults_should_be -g InitialKeyRepeat 15
+  defaults_should_be -g AppleShowAllExtensions 1
+  defaults_should_be -g com.apple.trackpad.scaling 3
+  defaults_should_be -g _HIHideMenuBar 0
+
+  # --- Dock ---
+  changed=0
+  defaults_should_be com.apple.dock wvous-tl-corner 5 && changed=1
+  defaults_should_be com.apple.dock wvous-tl-modifier 0 && changed=1
+  defaults_should_be com.apple.dock tilesize 128 && changed=1
+  defaults_should_be com.apple.dock magnification 1 && changed=1
+  defaults_should_be com.apple.dock orientation bottom && changed=1
+  defaults_should_be com.apple.dock autohide 1 && changed=1
+  defaults_should_be com.apple.dock showAppExposeGestureEnabled 1 && changed=1
+  if [ "$changed" = 1 ]; then
+    killall cfprefsd 2>/dev/null || true
+    killall Dock 2>/dev/null || true
+  fi
+
+  # --- Finder ---
+  changed=0
+  defaults_should_be com.apple.finder AppleShowAllFiles 1 && changed=1
+  defaults_should_be com.apple.finder ShowStatusBar 1 && changed=1
+  defaults_should_be com.apple.finder FinderSounds 0 && changed=1
+  defaults_should_be com.apple.finder FXPreferredViewStyle clmv && changed=1
+  defaults_should_be com.apple.finder PathBarRootAtHome 1 && changed=1
+  defaults_should_be com.apple.finder _FXSortFoldersFirst 1 && changed=1
+
+  # Finder: すべてのサイズを計算
+  local plist="$HOME/Library/Preferences/com.apple.finder.plist"
+  local pb="/usr/libexec/PlistBuddy"
+  for keypath in \
+    "StandardViewSettings:ListViewSettings:calculateAllSizes" \
+    "FK_StandardViewSettings:ListViewSettings:calculateAllSizes"; do
+    local cur
+    cur=$("$pb" -c "Print :$keypath" "$plist" 2>/dev/null) || cur=""
+    if [ "$cur" != "true" ]; then
+      "$pb" -c "Delete :$keypath" "$plist" 2>/dev/null || true
+      "$pb" -c "Add :$keypath bool true" "$plist"
+      changed=1
+    fi
+  done
+
+  if [ "$changed" = 1 ]; then
+    killall Finder 2>/dev/null || true
+  fi
+
+  # --- Trackpad ---
+  defaults_should_be com.apple.AppleMultitouchTrackpad Clicking 1
+  defaults_should_be com.apple.driver.AppleBluetoothMultitouch.trackpad Clicking 1
+
+  # --- Activity Monitor ---
+  defaults_should_be com.apple.ActivityMonitor IconType 6
+
+  # --- Menu bar clock ---
+  defaults_should_be com.apple.menuextra.clock IsAnalog 1
+
+  # --- Battery ---
+  defaults_should_be "$HOME/Library/Preferences/ByHost/com.apple.controlcenter.plist" BatteryShowPercentage 1
+
+  # --- Bluetooth ---
+  defaults_should_be com.apple.controlcenter "NSStatusItem Visible Bluetooth" 1
+
+  # --- Touch Bar ---
+  changed=0
+  defaults_should_be com.apple.touchbar.agent PresentationModeGlobal fullControlStrip && changed=1
+  if [ "$changed" = 1 ]; then
+    killall TouchBarAgent 2>/dev/null || true
+    killall ControlStrip 2>/dev/null || true
+    killall SystemUIServer 2>/dev/null || true
+  fi
+
+  # --- Siri ---
+  defaults_should_be com.apple.Siri StatusMenuVisible 0
+
+  # --- Sound ---
+  defaults_should_be com.apple.systemsound com.apple.sound.uiaudio.enabled 0
+
+  # --- Night Shift 18:00-9:00 ---
+  # CoreBrightness の NightShift は defaults では制御不可（要API）
+  # → 手動設定のまま残す
+
+  # --- ポインタサイズ ---
+  # com.apple.universalaccess mouseDriverCursorSize は Sequoia では効かない
+  # → 手動設定のまま残す
+
+  # --- メモ.app フォントサイズ ---
+  defaults_should_be com.apple.Notes ICNotesFontSizeSchemaVersion 1
+  defaults_should_be com.apple.Notes ICNotesFontSize 5
+
+  log "macOS defaults done"
+}
+
+# ============================================================ 5. Third-party app defaults
+
+set_app_defaults() {
+  log "Setting app defaults..."
+
+  # Rectangle
+  local ver
+  ver=$(defaults read com.knollsoft.Rectangle gapSize 2>/dev/null) || ver=""
+  if [ -n "$ver" ]; then
+    defaults_should_be com.knollsoft.Rectangle StartAtLogin 1
+    defaults_should_be com.knollsoft.Rectangle gapSize 0
+    defaults_should_be com.knollsoft.Rectangle launchOnLogin 1
+  fi
+
+  # Microsoft Outlook
+  ver=$(defaults read com.microsoft.Outlook PreferencesVersion 2>/dev/null) || ver=""
+  if [ -n "$ver" ] && [ "$ver" -ge 6 ] 2>/dev/null; then
+    defaults_should_be com.microsoft.Outlook FocusedInboxEnabled 0
+  fi
+
+  # Backtrack
+  ver=$(defaults read com.YAC.Backtrack "Launch Count" 2>/dev/null) || ver=""
+  if [ -n "$ver" ]; then
+    defaults_should_be com.YAC.Backtrack "Capture Maximum Minutes" 300
+  fi
+
+  # WebEx
+  ver=$(defaults read com.cisco.webexmeetingsapp PTLaunchAtLogin 2>/dev/null) || ver=""
+  if [ -n "$ver" ]; then
+    defaults_should_be com.cisco.webexmeetingsapp PTLaunchAtLogin 0
+  fi
+
+  log "App defaults done"
+}
+
+# ============================================================ 6. Keyboard
+
+set_keyboard() {
+  log "Setting keyboard..."
+
+  # CapsLock → Ctrl
+  local mapping='{"UserKeyMapping":[{"HIDKeyboardModifierMappingSrc":0x700000039,"HIDKeyboardModifierMappingDst":0x7000000E0}]}'
+  local current
+  current=$(hidutil property --get "UserKeyMapping" 2>/dev/null) || current=""
+  if echo "$current" | grep -q "30064771129"; then
+    echo "  CapsLock -> Ctrl: already set"
+  else
+    hidutil property --set "$mapping" >/dev/null
+    echo "  CapsLock -> Ctrl: applied"
+  fi
+
+  # LaunchAgent for persistence
+  local plist_path="$HOME/Library/LaunchAgents/com.local.KeyRemapping.plist"
+  if [ ! -f "$plist_path" ]; then
+    mkdir -p "$HOME/Library/LaunchAgents"
+    cat > "$plist_path" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.local.KeyRemapping</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/hidutil</string>
+    <string>property</string>
+    <string>--set</string>
+    <string>$mapping</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+</dict>
+</plist>
+PLIST
+    echo "  LaunchAgent created: $plist_path"
+  fi
+
+  # Disable conflicting keyboard shortcuts
+  local plist="$HOME/Library/Preferences/com.apple.symbolichotkeys.plist"
+  local pb="/usr/libexec/PlistBuddy"
+  local shortcut_changed=0
+
+  for entry in \
+    "60|Input source prev (^Space)|32|49|262144" \
+    "61|Input source next (^⌥Space)|32|49|786432" \
+    "64|Spotlight (⌘Space)|65535|49|1048576" \
+    "65|Spotlight Finder (⌘⌥Space)|65535|49|1572864"; do
+    local id desc p1 p2 p3
+    IFS='|' read -r id desc p1 p2 p3 <<< "$entry"
+    local enabled
+    enabled=$("$pb" -c "Print :AppleSymbolicHotKeys:$id:enabled" "$plist" 2>/dev/null) || enabled="true"
+    if [ "$enabled" = "false" ]; then
+      echo "  $desc: already disabled"
+    else
+      defaults write com.apple.symbolichotkeys AppleSymbolicHotKeys -dict-add "$id" \
+        "<dict><key>enabled</key><false/><key>value</key><dict><key>parameters</key><array><integer>$p1</integer><integer>$p2</integer><integer>$p3</integer></array><key>type</key><string>standard</string></dict></dict>"
+      echo "  $desc: disabled"
+      shortcut_changed=1
+    fi
+  done
+
+  if [ "$shortcut_changed" = 1 ]; then
+    /System/Library/PrivateFrameworks/SystemAdministration.framework/Resources/activateSettings -u 2>/dev/null || true
+  fi
+
+  log "Keyboard done"
+}
+
+# ============================================================ 7. Keyboard Maestro
+
+set_keyboard_maestro() {
+  [ -d "/Applications/Keyboard Maestro.app" ] || return 0
+  log "Configuring Keyboard Maestro..."
+
+  # Disable Cmd-Tab hijack
+  local result
+  result=$(osascript -e 'tell application "Keyboard Maestro"
+    tell macro group "Switcher Group"
+      if enabled of macro "Activate Application Switcher" then
+        set enabled of macro "Activate Application Switcher" to false
+        return "disabled"
+      else
+        return "already disabled"
+      end if
+    end tell
+  end tell' 2>/dev/null) || result="error"
+  echo "  Application Switcher (Cmd-Tab): $result"
+
+  # Disable Ctrl-Tab hijack via plist (binary plist requires python3)
+  local km_plist="$HOME/Library/Application Support/Keyboard Maestro/Keyboard Maestro Macros.plist"
+  if [ -f "$km_plist" ] && command -v python3 &>/dev/null; then
+    local uid="70FDB5E5-F7FA-4DCD-A19B-8B9266F758A1"
+    result=$(python3 -c "
+import plistlib, sys
+path = sys.argv[1]
+uid = sys.argv[2]
+with open(path, 'rb') as f:
+    data = plistlib.load(f)
+found = False
+for group in data.get('MacroGroups', []):
+    for macro in group.get('Macros', []):
+        if macro.get('UID') == uid:
+            if macro.get('IsActive') == False:
+                print('already disabled'); sys.exit(0)
+            else:
+                macro['IsActive'] = False; found = True
+if found:
+    with open(path, 'wb') as f:
+        plistlib.dump(data, f, fmt=plistlib.FMT_BINARY)
+    print('disabled')
+else:
+    print('not found')
+" "$km_plist" "$uid" 2>/dev/null) || result="error"
+    echo "  Ctrl-Tab: $result"
+    if [ "$result" = "disabled" ]; then
+      osascript -e 'tell application "Keyboard Maestro Engine" to reload' 2>/dev/null || true
+    fi
+  fi
+}
+
+# ============================================================ 8. Dock icons
+
+configure_dock() {
+  log "Configuring Dock..."
+  command -v dockutil &>/dev/null || { echo "  dockutil not found, skipping"; return 0; }
+
+  local dock
+  dock=$(dockutil --list 2>/dev/null) || return 0
+  local dock_modified=0
+
+  # Remove unwanted default icons
+  for app in \
+    "メッセージ" "メール" "マップ" "FaceTime" \
+    "連絡先" "フリーボード" "TV" "ミュージック" "App Store" "システム設定"; do
+    if echo "$dock" | grep -q "$app"; then
+      dockutil --remove "$app" --no-restart 2>/dev/null && dock_modified=1
+    fi
+  done
+
+  # Desired apps in order
+  # dockutil --add appends at the end; --after specifies position
+  local prev=""
+  for app in \
+    "/System/Applications/Utilities/Activity Monitor.app" \
+    "/System/Applications/Utilities/Terminal.app" \
+    "/Applications/iTerm.app" \
+    "/Applications/kitty.app" \
+    "/Applications/Ghostty.app" \
+    "/Applications/Emacs.app" \
+    "/Applications/Thunderbird.app" \
+    "/Applications/Comet.app" \
+    "/Applications/Google Chrome.app" \
+    "/Applications/Microsoft Edge.app" \
+    "/System/Volumes/Preboot/Cryptexes/App/System/Applications/Safari.app" \
+    "/Applications/Firefox.app" \
+    "/Applications/Opera.app" \
+    "/Applications/Brave Browser.app" \
+    "/Applications/LINE.app" \
+    "/Applications/Claude.app" \
+    "/Applications/Antigravity.app" \
+    "/System/Applications/Photos.app" \
+    "/System/Applications/FindMy.app" \
+    "/System/Applications/VoiceMemos.app" \
+    "/Applications/SwitchBot.app" \
+    "/System/Applications/Notes.app" \
+    "/System/Applications/Reminders.app" \
+    "/System/Applications/Calendar.app" \
+    "/Applications/WiFi Explorer.app"; do
+    [ -d "$app" ] || continue
+    local bname
+    bname=$(basename "$app")
+    local encoded=${bname// /%20}
+    if echo "$dock" | grep -qE "$bname|$encoded"; then
+      prev="$bname"
+      continue
+    fi
+    if [ -n "$prev" ]; then
+      dockutil --add "$app" --after "$prev" --no-restart 2>/dev/null && dock_modified=1
+    else
+      dockutil --add "$app" --no-restart 2>/dev/null && dock_modified=1
+    fi
+    echo "  Dock add: $bname"
+    prev="$bname"
+  done
+
+  if [ "$dock_modified" = 1 ]; then
+    killall Dock 2>/dev/null || true
+  fi
+}
+
+# ============================================================ 9. Wallpaper
+
+set_wallpaper_black() {
+  log "Setting wallpaper to black..."
+  local black_png="/tmp/black_wallpaper.png"
+  if [ ! -f "$black_png" ]; then
+    # 1x1 black PNG (base64, no external dependency)
+    echo "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQI12NgYPj/HwADBwIAMCbHYQAAAABJRU5ErkJggg==" | base64 -D > "$black_png"
+  fi
+  osascript -e "tell application \"System Events\" to tell every desktop to set picture to \"$black_png\"" 2>/dev/null || true
+}
+
+# ============================================================ 10. Login items
+
+add_login_items() {
+  log "Setting login items..."
+  local items
+  items=$(osascript -e 'tell application "System Events" to get the name of every login item' 2>/dev/null) || items=""
+
+  for pair in \
+    "Rectangle:/Applications/Rectangle.app" \
+    "Dropbox:/Applications/Dropbox.app" \
+    "SwiftBar:/Applications/SwiftBar.app" \
+    "MeetingBar:/Applications/MeetingBar.app" \
+    "Flux:/Applications/Flux.app" \
+    "Emacs:/Applications/Emacs.app" \
+    "Backtrack:/Applications/Backtrack.app" \
+    "Google Chrome:/Applications/Google Chrome.app" \
+    "Thunderbird:/Applications/Thunderbird.app" \
+    "Comet:/Applications/Comet.app" \
+    "Claude:/Applications/Claude.app"; do
+    local name="${pair%%:*}"
+    local path="${pair#*:}"
+    [ -d "$path" ] || continue
+    if echo "$items" | grep -q "$name"; then
+      :
+    else
+      osascript -e "tell application \"System Events\" to make login item at end with properties {path:\"$path\", hidden:false}" 2>/dev/null || true
+      echo "  $name: added"
+    fi
+  done
+}
+
+# ============================================================ 11. Thunderbird (-f flag)
+
+set_thunderbird_prefs() {
+  local tb_dir="$HOME/Library/Thunderbird"
+  [ -d "$tb_dir" ] || return 0
+  [ -f "$tb_dir/profiles.ini" ] || return 0
+  log "Configuring Thunderbird..."
+
+  # Find default profile (pure bash)
+  local profile_path=""
+  local in_default=0
+  while IFS= read -r line; do
+    case "$line" in
+      "["*) in_default=0 ;;
+      "Default=1") in_default=1 ;;
+      Path=*)
+        if [ "$in_default" = 1 ]; then
+          profile_path="${line#Path=}"
+          break
+        fi
+        ;;
+    esac
+  done < "$tb_dir/profiles.ini"
+
+  # fallback
+  if [ -z "$profile_path" ]; then
+    for d in "$tb_dir"/Profiles/*.default-release; do
+      [ -d "$d" ] && profile_path="Profiles/$(basename "$d")" && break
+    done
+  fi
+  [ -z "$profile_path" ] && return 0
+
+  local profile_dir="$tb_dir/$profile_path"
+  [ -d "$profile_dir" ] || return 0
+  local user_js="$profile_dir/user.js"
+  local downloads="$DROPBOX/Documents"
+
+  touch "$user_js"
+
+  for entry in \
+    "font.size.variable.ja|24" \
+    "font.size.monospace.ja|24" \
+    "font.minimum-size.ja|24" \
+    "font.size.variable.x-western|24" \
+    "font.size.monospace.x-western|24" \
+    "font.minimum-size.x-western|24" \
+    "browser.download.folderList|2" \
+    "mail.pane_config.dynamic|0" \
+    "uidensity|1" \
+    "mailnews.start_page.enabled|false" \
+    "mail.spacesToolbar.isHidden|true" \
+    "browser.download.dir|\"$downloads\""; do
+    local key="${entry%%|*}"
+    local val="${entry#*|}"
+    local line="user_pref(\"$key\", $val);"
+    if grep -qF "\"$key\"" "$user_js" 2>/dev/null; then
+      if grep -qF "$line" "$user_js" 2>/dev/null; then
+        continue
+      fi
+      local escaped_line
+      escaped_line=$(printf '%s\n' "$line" | sed 's/[&/\]/\\&/g')
+      sed -i '' "s|^user_pref(\"$key\",.*);|$escaped_line|" "$user_js"
+      echo "  $key: updated"
+    else
+      echo "$line" >> "$user_js"
+      echo "  $key: added"
+    fi
+  done
+}
+
+# ============================================================ 12. Stylus extension (-f flag)
+
+check_stylus_import() {
+  local stylus_id="clngdbkpkpeebahjckkjfobafhncgmne"
+  local json_path="$SYSTEM/lib/Stylus/stylus-2026-03-21.json"
+
+  for pair in \
+    "Comet:$HOME/Library/Application Support/Comet/Default/Local Extension Settings/$stylus_id" \
+    "Chrome:$HOME/Library/Application Support/Google Chrome/Default/Local Extension Settings/$stylus_id"; do
+    local name="${pair%%:*}"
+    local dir="${pair#*:}"
+    [ -d "$dir" ] || continue
+    local size
+    size=$(du -sk "$dir" 2>/dev/null | cut -f1) || size=0
+    if [ "$size" -lt 32 ] 2>/dev/null; then
+      echo "  Stylus ($name): スタイル未インポート"
+      echo "    $json_path"
+    else
+      echo "  Stylus ($name): OK (${size}KB)"
+    fi
+  done
+}
+
+# ============================================================ 13. Homebrew packages (-b flag)
+
+BREWFILE_BASE='tap "okisanjp/bl"
+tap "blacktop/tap"
+brew "yt-dlp"
+brew "m-cli"
+brew "mas"
+brew "dockutil"
+brew "ruby"
+brew "wget"
+brew "ical-buddy"
+brew "ffmpeg"
+brew "qpdf"
+brew "subversion"
+brew "telnet"
+brew "md5sha1sum"
+brew "pyenv"
+brew "gh"
+brew "git-lfs"
+brew "imagemagick"
+brew "httrack"
+brew "tesseract"
+brew "tesseract-lang"
+brew "opencv"
+brew "pipx"
+brew "gcalcli"
+brew "poppler"
+brew "node"
+brew "ncdu"
+brew "nginx"
+brew "gemini-cli"
+brew "npm"
+brew "rbenv"
+brew "ocrmypdf"
+brew "libaacs"
+brew "libbluray"
+brew "uv"
+brew "streamlink"
+brew "tmux"
+brew "youtubeuploader"
+brew "oven-sh/bun/bun"
+brew "pandoc"
+brew "ollama"
+brew "expect"
+brew "weasyprint"
+cask "dropbox"
+cask "rectangle"
+cask "swiftbar"
+cask "stats"
+cask "emacs-app"
+cask "keyboard-maestro"
+cask "iterm2"
+cask "flux-app"
+cask "iina"
+cask "thunderbird"
+cask "google-chrome"
+cask "duckduckgo"
+cask "firefox"
+cask "font-noto-sans-jp"
+cask "font-noto-serif-jp"
+cask "font-biz-udpgothic"
+cask "font-biz-udgothic"
+cask "the-unarchiver"
+cask "android-file-transfer"
+cask "air-video-server-hd"
+cask "obsidian"
+cask "itsycal"
+cask "menubarx"
+cask "meetingbar"
+cask "chatgpt"
+cask "arc"
+cask "chatgpt-atlas"
+cask "claude"
+cask "comet"
+cask "copilot-cli"
+cask "opera"
+cask "vivaldi"
+cask "vlc"
+cask "zen"
+cask "processing"
+cask "claude-code"
+cask "antigravity"
+cask "kitty"
+cask "alacritty"
+cask "ghostty"
+cask "audacity"
+cask "whatsapp"
+cask "visual-studio-code"
+cask "blender"
+cask "microsoft-edge"
+cask "webex"
+cask "disk-drill"
+cask "brave-browser"
+cask "qlmarkdown"
+'
+
+BREWFILE_ADMIN='cask "adobe-acrobat-reader"
+cask "karabiner-elements"
+cask "google-drive"
+cask "microsoft-teams"
+cask "zoom"
+cask "tailscale"
+cask "dotnet-sdk"
+cask "backblaze"
+'
+
+BREWFILE_EXTENDED='mas "Backtrack", id: 1477089520
+mas "Kindle", id: 302584613
+mas "LINE", id: 539883307
+mas "KakaoTalk", id: 869223134
+mas "Keynote", id: 409183694
+mas "Numbers", id: 409203825
+mas "Pages", id: 409201541
+mas "iMovie", id: 408981434
+mas "Final Cut Pro", id: 424389933
+mas "Compressor", id: 424390742
+mas "Motion", id: 434290957
+mas "Xcode", id: 497799835
+cask "affinity-designer"
+cask "affinity-photo"
+cask "affinity-publisher"
+'
+
+install_packages() {
+  log "Setting up Homebrew packages..."
+
+  # Xcode CLI tools
+  if ! xcode-select -p &>/dev/null; then
+    log "Installing Xcode Command Line Tools..."
+    xcode-select --install
+    read -rp "Press Enter after Xcode CLT installation completes..."
+  fi
+
+  brew update
+  brew upgrade
+
+  local tmpfile
+  tmpfile=$(mktemp /tmp/Brewfile.XXXXXX)
+  echo "$BREWFILE_BASE" > "$tmpfile"
+
+  if [ "$INSTALL_ADMIN" = 1 ]; then
+    sudo -v
+    echo "$BREWFILE_ADMIN" >> "$tmpfile"
+  fi
+  if [ "$INSTALL_EXTENDED" = 1 ]; then
+    echo "$BREWFILE_EXTENDED" >> "$tmpfile"
+  fi
+
+  brew bundle --file="$tmpfile" || true
+  rm -f "$tmpfile"
+
+  # iPad apps
+  if [ ! -d "/Applications/SwitchBot.app/WrappedBundle" ]; then
+    echo "  SwitchBot: not installed, opening App Store..."
+    open "macappstore://apps.apple.com/app/id1087374760"
+  fi
+
+  brew cleanup
+  log "Packages done"
+}
+
+# ============================================================ 14. Computer name
+
+set_computer_name() {
+  local current
+  current=$(scutil --get ComputerName 2>/dev/null) || current=""
+  if [ -n "$current" ] && [ "$current" != "$(whoami)のMacBook Pro" ] && [ "$current" != "MacBook Pro" ]; then
+    echo "  Computer name: $current (already set)"
+    return
+  fi
+  echo ""
+  read -rp "  コンピュータ名を入力 (空欄でスキップ): " name
+  if [ -n "$name" ]; then
+    scutil --set ComputerName "$name"
+    scutil --set LocalHostName "$name"
+    scutil --set HostName "$name"
+    echo "  Computer name set to: $name"
+  fi
+}
+
+# ============================================================ Main
+
+main() {
+  echo "=== Mac Setup ==="
+  echo "User: $(whoami) | Host: $(hostname -s)"
+  echo ""
+
+  # Parse options: setup [full [-a] [-x]]
+  INSTALL_BREW=0
+  INSTALL_ADMIN=0
+  INSTALL_EXTENDED=0
+  RUN_FULL=0
+
+  if [ "${1:-}" = "full" ]; then
+    RUN_FULL=1
+    INSTALL_BREW=1
+    shift
+    while getopts "ax" opt; do
+      case $opt in
+        a) INSTALL_ADMIN=1 ;;
+        x) INSTALL_EXTENDED=1 ;;
+        *) echo "Usage: $0 [full [-a] [-x]]"; exit 1 ;;
+      esac
+    done
+  fi
+
+  install_homebrew
+  install_dropbox
+  wait_for_system
+  create_symlinks
+  set_macos_defaults
+  set_app_defaults
+  set_keyboard
+  set_keyboard_maestro
+  set_computer_name
+
+  if [ "$INSTALL_BREW" = 1 ]; then
+    install_packages
+  else
+    log "Brew: skipped (use 'setup full' to run)"
+  fi
+
+  configure_dock
+  set_wallpaper_black
+  add_login_items
+
+  if [ "$RUN_FULL" = 1 ]; then
+    set_thunderbird_prefs
+    check_stylus_import
+  fi
+
+  # SSH鍵の確認
+  if ! ls "$HOME/.ssh/id_ed25519"* &>/dev/null; then
+    echo ""
+    echo "  SSH鍵がありません。以下を実行してください:"
+    echo "    ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N \"\""
+  fi
+
+  echo ""
+  echo "=== Setup complete ==="
+  echo ""
+  echo "残りの手動設定:"
+  echo "  - システム設定 → ディスプレイ → スペースを拡大"
+  echo "  - システム設定 → ディスプレイ → Night Shift 18:00-9:00"
+  echo "  - システム設定 → Touch IDとパスワード → Apple Watch"
+  echo "  - システム設定 → インターネットアカウント → Googleアカウント追加"
+  echo "  - アクセシビリティ → ポインタ → サイズを大きくする"
+}
+
+main "$@"
