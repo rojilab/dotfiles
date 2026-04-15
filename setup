@@ -3,9 +3,9 @@
 # Usage:
 #   curl -fsSL rojilab.github.io/dotfiles/setup | bash
 #   bash ~/git/dotfiles/setup
-#   bash setup full     (+ brew + Thunderbird/Stylus)
-#   bash setup full -a  (+ admin packages, requires sudo)
-#   bash setup full -x  (+ extended packages)
+#   bash setup -a       (+ admin packages, requires sudo)
+#   bash setup -x       (+ extended packages)
+#   bash setup -f       (+ Thunderbird/Stylus checks)
 #
 # bash 3.2+ compatible (macOS default)
 
@@ -70,8 +70,10 @@ install_dropbox() {
     log "Dropbox: already synced"
     return 0
   fi
-  log "Installing Dropbox..."
-  brew install --cask dropbox
+  if ! brew list --cask dropbox &>/dev/null 2>&1; then
+    log "Installing Dropbox..."
+    brew install --cask dropbox
+  fi
   cat <<'MSG'
 
   Dropboxを起動してログインしてください:
@@ -93,27 +95,21 @@ install_dropbox() {
   6. ~/Dropbox/System を右クリック → オフラインアクセスを許可
 
 MSG
-  open /Applications/Dropbox.app
-  read -rp "  Dropbox設定が完了したらEnterを押してください..."
-
-  if [ ! -d "$SYSTEM/bin" ]; then
-    echo "  ~/Dropbox/System がまだ同期されていません。"
-    echo "  同期を待ってから再実行してください。"
-    exit 1
-  fi
+  open /Applications/Dropbox.app 2>/dev/null || true
+  echo "  Dropbox同期後に再度 setup を実行するとシンボリックリンクが作成されます。"
 }
 
-wait_for_system() {
-  if [ ! -d "$SYSTEM/bin" ]; then
-    echo "  ~/Dropbox/System がまだ同期されていません。"
-    echo "  Dropboxの同期を待ってから再実行してください。"
-    exit 1
-  fi
+dropbox_available() {
+  [ -d "$SYSTEM/bin" ]
 }
 
 # ============================================================ 3. Symlinks
 
 create_symlinks() {
+  if ! dropbox_available; then
+    log "Symlinks: skipped (Dropbox/System not synced yet)"
+    return 0
+  fi
   log "Creating symlinks..."
   cd "$HOME"
 
@@ -779,9 +775,6 @@ install_packages() {
     read -rp "Press Enter after Xcode CLT installation completes..."
   fi
 
-  brew update
-  brew upgrade
-
   local tmpfile
   tmpfile=$(mktemp /tmp/Brewfile.XXXXXX)
   echo "$BREWFILE_BASE" > "$tmpfile"
@@ -833,44 +826,34 @@ main() {
   echo "User: $(whoami) | Host: $(hostname -s)"
   echo ""
 
-  # Parse options: setup [full [-a] [-x]]
-  INSTALL_BREW=0
+  # Parse options: setup [-a] [-x] [-f]
   INSTALL_ADMIN=0
   INSTALL_EXTENDED=0
   RUN_FULL=0
+  while getopts "axf" opt; do
+    case $opt in
+      a) INSTALL_ADMIN=1 ;;
+      x) INSTALL_EXTENDED=1 ;;
+      f) RUN_FULL=1 ;;
+      *) echo "Usage: $0 [-a] [-x] [-f]"; exit 1 ;;
+    esac
+  done
 
-  if [ "${1:-}" = "full" ]; then
-    RUN_FULL=1
-    INSTALL_BREW=1
-    shift
-    while getopts "ax" opt; do
-      case $opt in
-        a) INSTALL_ADMIN=1 ;;
-        x) INSTALL_EXTENDED=1 ;;
-        *) echo "Usage: $0 [full [-a] [-x]]"; exit 1 ;;
-      esac
-    done
-  fi
-
+  # Phase 1: Dropbox不要（新Macでも即実行可能）
   install_homebrew
-  install_dropbox
-  wait_for_system
-  create_symlinks
+  install_packages
   set_macos_defaults
   set_app_defaults
   set_keyboard
   set_keyboard_maestro
   set_computer_name
-
-  if [ "$INSTALL_BREW" = 1 ]; then
-    install_packages
-  else
-    log "Brew: skipped (use 'setup full' to run)"
-  fi
-
   configure_dock
   set_wallpaper_black
   add_login_items
+
+  # Phase 2: Dropbox同期後（未同期ならスキップ）
+  install_dropbox
+  create_symlinks
 
   if [ "$RUN_FULL" = 1 ]; then
     set_thunderbird_prefs
@@ -887,6 +870,10 @@ main() {
   echo ""
   echo "=== Setup complete ==="
   echo ""
+  if ! dropbox_available; then
+    echo "  Dropbox同期後に再度 setup を実行してください（シンボリックリンク作成）"
+    echo ""
+  fi
   echo "残りの手動設定:"
   echo "  - システム設定 → ディスプレイ → スペースを拡大"
   echo "  - システム設定 → ディスプレイ → Night Shift 18:00-9:00"
