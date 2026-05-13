@@ -152,18 +152,34 @@ EOF
 
 setup_tailscale() {
   if [ -z "${TS_AUTH_KEY:-}" ]; then
-    warn "TS_AUTH_KEY 未指定: 'tailscale up' はスキップ。後で:"
-    warn "  sudo tailscale up --hostname=$TS_HOSTNAME --ssh"
+    warn "TS_AUTH_KEY 未指定: 'tailscale up' はスキップ。"
     return
   fi
   if ! command -v tailscale &>/dev/null; then
     warn "tailscale CLI が見つからず。Brewfile install を確認。"
     return
   fi
-  if tailscale status &>/dev/null && ! tailscale status | head -1 | grep -q "Logged out"; then
-    skip "tailscale: already up"
-    return
+
+  # tailscaled daemon を起動（brew services 経由、未起動なら）
+  # `tailscale status` が "failed to connect" を返すなら daemon 死亡 → start
+  if ! tailscale status >/dev/null 2>&1; then
+    info "Starting tailscaled (brew services)..."
+    sudo brew services start tailscale >/dev/null 2>&1 || true
+    # daemon 起動を最大 10 秒待つ
+    for i in $(seq 1 10); do
+      tailscale status >/dev/null 2>&1 && break
+      sleep 1
+    done
   fi
+
+  # 既に up 済みなら何もしない
+  if tailscale status 2>/dev/null | head -1 | grep -qv "Logged out"; then
+    if tailscale status 2>/dev/null | head -1 | grep -q "^[0-9]"; then
+      skip "tailscale: already up"
+      return
+    fi
+  fi
+
   info "tailscale up (hostname=$TS_HOSTNAME)..."
   sudo tailscale up --authkey="$TS_AUTH_KEY" --hostname="$TS_HOSTNAME" --ssh
   ok "tailscale up"
@@ -187,8 +203,6 @@ MSG
 
 main() {
   echo "=== HoshiLab agent setup ==="
-  echo "User: $(whoami) | Host: $(hostname -s) | Date: $(date '+%Y-%m-%d %H:%M:%S')"
-  echo ""
 
   setup_repo
   setup_homebrew
