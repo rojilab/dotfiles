@@ -6,18 +6,31 @@
 #
 # Usage (ssh越し or ローカル):
 #   curl -fsSL rojilab.github.io/dotfiles/setup-agent -o setup-agent
-#   GH_TOKEN=ghp_xxx TS_AUTH_KEY=tskey-xxxx bash setup-agent
+#   bash setup-agent
 #
-# 環境変数:
+# 環境変数 (~/.secrets/agent-keys.env から自動 source される):
 #   GH_TOKEN      hoshilab-conf (private) を clone するための PAT
-#                 (省略時は公開cloneを試行、失敗したら案内表示)
-#   TS_AUTH_KEY   Tailscale auth key (空ならtailscale upはスキップ、後で手動)
+#                 (省略時は公開cloneを試行、失敗したら exit)
+#   TS_AUTH_KEY   Tailscale auth key (空ならtailscale upはスキップ)
 #   TS_HOSTNAME   Tailscale 上のホスト名 (default: hoshilab)
 #   REPO_DIR      hoshilab-conf の clone 先 (default: ~/git/hoshilab-conf)
+#
+# secrets ファイルの形式 (~/.secrets/agent-keys.env, mode 600):
+#   export GH_TOKEN='ghp_xxxxxxxx'
+#   export TS_AUTH_KEY='tskey-xxxxxxxx'
 #
 # 冪等: 何度実行しても安全。各ステップは現状確認して必要分だけ実行。
 
 set -euo pipefail
+
+# 秘密情報 (GH_TOKEN, TS_AUTH_KEY 等) は ~/.secrets/agent-keys.env から自動読み込み。
+# 環境変数として渡されたものはそのまま使われる（ファイルが上書きする訳ではない）。
+if [ -f "$HOME/.secrets/agent-keys.env" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  . "$HOME/.secrets/agent-keys.env"
+  set +a
+fi
 
 REPO_URL="https://github.com/rojilab/hoshilab-conf.git"
 REPO_DIR="${REPO_DIR:-$HOME/git/hoshilab-conf}"
