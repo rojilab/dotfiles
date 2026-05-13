@@ -803,18 +803,37 @@ install_packages() {
 # ============================================================ 14. Computer name
 
 set_computer_name() {
-  local current
+  local current target name
   current=$(scutil --get ComputerName 2>/dev/null) || current=""
+  target="${HOSTNAME_TARGET:-}"
+
+  # 環境変数 HOSTNAME_TARGET があれば、現状値と異なるときだけ更新（非対話）
+  if [ -n "$target" ]; then
+    if [ "$current" = "$target" ]; then
+      echo "  Computer name: $current (already set)"
+      return
+    fi
+    name="$target"
+    echo "  Setting computer name to: $name (from HOSTNAME_TARGET)"
+    sudo scutil --set ComputerName "$name"
+    sudo scutil --set LocalHostName "$name"
+    sudo scutil --set HostName "$name"
+    return
+  fi
+
+  # 既にデフォルト名以外がセットされていればスキップ
   if [ -n "$current" ] && [ "$current" != "$(whoami)のMacBook Pro" ] && [ "$current" != "MacBook Pro" ]; then
     echo "  Computer name: $current (already set)"
     return
   fi
+
+  # 対話入力（HOSTNAME_TARGETなし・デフォルト名のまま）
   echo ""
   read -rp "  コンピュータ名を入力 (空欄でスキップ): " name
   if [ -n "$name" ]; then
-    scutil --set ComputerName "$name"
-    scutil --set LocalHostName "$name"
-    scutil --set HostName "$name"
+    sudo scutil --set ComputerName "$name"
+    sudo scutil --set LocalHostName "$name"
+    sudo scutil --set HostName "$name"
     echo "  Computer name set to: $name"
   fi
 }
