@@ -1,0 +1,192 @@
+#!/bin/bash
+# setup-agent.sh — HoshiLab agent専用機の自動セットアップ（idempotent）
+#
+# 想定: 遠隔操作のみで運用する常時稼働マシン。
+#       eto個人設定は持ち込まず、HoshiLab共通設定のみ展開する。
+#
+# Usage (ssh越し or ローカル):
+#   curl -fsSL rojilab.github.io/dotfiles/setup-agent -o setup-agent
+#   GH_TOKEN=ghp_xxx TS_AUTH_KEY=tskey-xxxx bash setup-agent
+#
+# 環境変数:
+#   GH_TOKEN      hoshilab-conf (private) を clone するための PAT
+#                 (省略時は公開cloneを試行、失敗したら案内表示)
+#   TS_AUTH_KEY   Tailscale auth key (空ならtailscale upはスキップ、後で手動)
+#   TS_HOSTNAME   Tailscale 上のホスト名 (default: hoshilab)
+#   REPO_DIR      hoshilab-conf の clone 先 (default: ~/git/hoshilab-conf)
+#
+# 冪等: 何度実行しても安全。各ステップは現状確認して必要分だけ実行。
+
+set -euo pipefail
+
+REPO_URL="https://github.com/rojilab/hoshilab-conf.git"
+REPO_DIR="${REPO_DIR:-$HOME/git/hoshilab-conf}"
+TS_HOSTNAME="${TS_HOSTNAME:-hoshilab}"
+
+if [ -t 1 ]; then
+  GREEN=$'\033[32m'; YELLOW=$'\033[33m'; RED=$'\033[31m'; CYAN=$'\033[36m'; DIM=$'\033[2m'; RESET=$'\033[0m'
+else
+  GREEN=""; YELLOW=""; RED=""; CYAN=""; DIM=""; RESET=""
+fi
+info() { echo "${CYAN}▶${RESET} $*"; }
+ok()   { echo "${GREEN}✓${RESET} $*"; }
+skip() { echo "${DIM}=${RESET} $*"; }
+warn() { echo "${YELLOW}⚠${RESET} $*"; }
+err()  { echo "${RED}✗${RESET} $*" >&2; }
+
+# ============================================================ 1. リポジトリ取得 / 更新
+
+setup_repo() {
+  info "Repository: $REPO_DIR"
+  if [ -d "$REPO_DIR/.git" ]; then
+    git -C "$REPO_DIR" pull --rebase --quiet
+    ok "repo updated"
+    return
+  fi
+  mkdir -p "$(dirname "$REPO_DIR")"
+  local clone_url="$REPO_URL"
+  if [ -n "${GH_TOKEN:-}" ]; then
+    # PAT を URL に埋め込んで認証 (private repo 対応)
+    clone_url="https://${GH_TOKEN}@github.com/rojilab/hoshilab-conf.git"
+  fi
+  if git clone --quiet "$clone_url" "$REPO_DIR" 2>/dev/null; then
+    # ローカル remote から token を剥がしておく (git config に残さない)
+    git -C "$REPO_DIR" remote set-url origin "$REPO_URL"
+    ok "repo cloned"
+  else
+    err "clone失敗: hoshilab-conf は private です。GH_TOKEN=ghp_xxx を渡してください。"
+    err "  td側で発行: https://github.com/settings/tokens (repo scope)"
+    exit 1
+  fi
+}
+
+# ============================================================ 2. Homebrew
+
+setup_homebrew() {
+  if command -v brew &>/dev/null; then
+    skip "Homebrew: $(brew --version | head -1)"
+    return
+  fi
+  if [ -x /opt/homebrew/bin/brew ]; then
+    eval "$(/opt/homebrew/bin/brew shellenv)"
+    skip "Homebrew: $(brew --version | head -1) (PATH adjusted)"
+    return
+  fi
+  info "Installing Homebrew..."
+  NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+  eval "$(/opt/homebrew/bin/brew shellenv)"
+  if [ -f "$HOME/.zprofile" ] && ! grep -q "brew shellenv" "$HOME/.zprofile"; then
+    echo '' >> "$HOME/.zprofile"
+    echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> "$HOME/.zprofile"
+  fi
+  ok "Homebrew installed"
+}
+
+# ============================================================ 3. Brewfile.shared
+
+apply_brewfile() {
+  info "brew bundle (Brewfile.shared)..."
+  brew bundle --file="$REPO_DIR/Brewfile.shared" || true
+  ok "Brewfile applied"
+}
+
+# ============================================================ 4. .claude/ 配置
+
+link_if_new() {
+  local src="$1" dst="$2"
+  if [ -L "$dst" ] && [ "$(readlink "$dst")" = "$src" ]; then
+    skip "symlink ok: ${dst/$HOME/~}"
+    return
+  fi
+  [ -e "$dst" ] && mv "$dst" "$dst.bak.$(date +%Y%m%d%H%M%S)"
+  ln -s "$src" "$dst"
+  ok "symlink: ${dst/$HOME/~} → ${src/$HOME/~}"
+}
+
+apply_claude_config() {
+  mkdir -p "$HOME/.claude/hooks"
+  link_if_new "$REPO_DIR/.claude/CLAUDE.shared.md"     "$HOME/.claude/CLAUDE.md"
+  link_if_new "$REPO_DIR/.claude/settings.shared.json" "$HOME/.claude/settings.json"
+  link_if_new "$REPO_DIR/.claude/statusline.sh"        "$HOME/.claude/statusline.sh"
+  for h in "$REPO_DIR/.claude/hooks/"*; do
+    name=$(basename "$h")
+    case "$name" in
+      __pycache__) continue ;;
+      *.pyc)       continue ;;
+    esac
+    link_if_new "$h" "$HOME/.claude/hooks/$name"
+  done
+}
+
+# ============================================================ 5. zshrc
+
+apply_zshrc() {
+  local zshrc="$HOME/.zshrc"
+  local marker="# HOSHILAB SHARED ZSHRC (managed by setup-agent.sh)"
+  if [ -f "$zshrc" ] && grep -q "$marker" "$zshrc"; then
+    skip "~/.zshrc: already wired"
+    return
+  fi
+  [ -e "$zshrc" ] && mv "$zshrc" "$zshrc.bak.$(date +%Y%m%d%H%M%S)"
+  cat > "$zshrc" <<EOF
+$marker
+source "$REPO_DIR/zshrc.shared.sh"
+EOF
+  ok "~/.zshrc generated"
+}
+
+# ============================================================ 6. Tailscale up
+
+setup_tailscale() {
+  if [ -z "${TS_AUTH_KEY:-}" ]; then
+    warn "TS_AUTH_KEY 未指定: 'tailscale up' はスキップ。後で:"
+    warn "  sudo tailscale up --hostname=$TS_HOSTNAME --ssh"
+    return
+  fi
+  if ! command -v tailscale &>/dev/null; then
+    warn "tailscale CLI が見つからず。Brewfile install を確認。"
+    return
+  fi
+  if tailscale status &>/dev/null && ! tailscale status | head -1 | grep -q "Logged out"; then
+    skip "tailscale: already up"
+    return
+  fi
+  info "tailscale up (hostname=$TS_HOSTNAME)..."
+  sudo tailscale up --authkey="$TS_AUTH_KEY" --hostname="$TS_HOSTNAME" --ssh
+  ok "tailscale up"
+}
+
+# ============================================================ 7. Claude Code 認証ガイド
+
+guide_claude_login() {
+  cat <<'MSG'
+
+▶ Claude Code OAuth ログイン:
+  1. このシェルで:    claude code login
+  2. 表示されたURLを td 等のブラウザで開く
+  3. サインインして得られた認証コードをこのターミナルに貼る
+  4. 完了後 'claude' でセッション開始可
+
+MSG
+}
+
+# ============================================================ Main
+
+main() {
+  echo "=== HoshiLab agent setup ==="
+  echo "User: $(whoami) | Host: $(hostname -s) | Date: $(date '+%Y-%m-%d %H:%M:%S')"
+  echo ""
+
+  setup_repo
+  setup_homebrew
+  apply_brewfile
+  apply_claude_config
+  apply_zshrc
+  setup_tailscale
+  guide_claude_login
+
+  echo ""
+  ok "setup-agent.sh complete"
+}
+
+main "$@"
