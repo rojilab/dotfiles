@@ -1,19 +1,84 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ja">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>rojilab/dotfiles</title>
+<title>rojilab/dotfiles — Mac setup</title>
 <style>
-body { font-family: -apple-system, sans-serif; max-width: 600px; margin: 80px auto; padding: 0 20px; color: #333; }
-code { background: #f0f0f0; padding: 12px 16px; display: block; border-radius: 6px; font-size: 15px; user-select: all; }
+body { font-family: -apple-system, "Hiragino Sans", "Hiragino Kaku Gothic ProN", sans-serif; max-width: 740px; margin: 50px auto; padding: 0 20px; color: #1a1a1a; line-height: 1.65; }
+h1 { font-size: 28px; margin: 0 0 8px; }
+h2 { font-size: 19px; margin: 32px 0 8px; padding-bottom: 6px; border-bottom: 1px solid #ddd; }
+.meta { color: #666; font-size: 14px; margin-bottom: 20px; }
+.step { margin: 14px 0 18px; }
+.cmd-wrap { position: relative; }
+.cmd { background: #f4f4f4; border-radius: 6px; padding: 14px 16px; padding-right: 76px; font-family: "SF Mono", Menlo, monospace; font-size: 14px; white-space: pre; overflow-x: auto; }
+.copy { position: absolute; top: 8px; right: 8px; background: #fff; border: 1px solid #ccc; border-radius: 4px; padding: 5px 11px; font-size: 12px; cursor: pointer; font-family: inherit; }
+.copy:hover { background: #f8f8f8; }
+.copy:active { background: #eee; }
+.copy.copied { background: #c6f6d5; border-color: #38a169; color: #22543d; }
+.note { color: #555; font-size: 14px; margin: 8px 0 0; }
+code { background: #eee; padding: 1px 6px; border-radius: 3px; font-size: 13px; }
 </style>
 </head>
 <body>
-<h1>Mac Setup</h1>
-<p>New Mac setup:</p>
-<code>curl -fsSL rojilab.github.io/dotfiles/setup | bash</code>
-<p>Options:</p>
-<code>bash setup -a # + admin packages (sudo)<br>bash setup -x # + extended packages<br>bash setup -f # + Thunderbird/Stylus checks</code>
+
+<h1>新Mac セットアップ</h1>
+<p class="meta">2段階運用 — 両ステップとも冪等。Safariでこのページを開きつつ、Terminalで上から順にCopy→⌘Vで実行する。</p>
+
+<h2>Stage 1 — 物理画面で（SSH + ホスト名）</h2>
+<p>新Mac の Terminal で実行。途中で sudo パスワードを聞かれるので、ログインパスワードを入力。</p>
+<div class="step">
+  <div class="cmd-wrap">
+    <pre class="cmd" data-cmd="curl -fsSL rojilab.github.io/dotfiles/setup-stage1 -o setup-stage1
+bash setup-stage1">curl -fsSL rojilab.github.io/dotfiles/setup-stage1 -o setup-stage1
+bash setup-stage1</pre>
+    <button class="copy">Copy</button>
+  </div>
+  <p class="note">SSH (Remote Login) を有効化し、ホスト名を <code>hoshilab</code> に設定する。完了したら別マシンから <code>ssh &lt;username&gt;@hoshilab.local</code> で入れる。</p>
+</div>
+
+<h2>Stage 2 — 別マシンから ssh で入って</h2>
+<p>Stage 1 完了後、別マシン（td2026 等）から <code>ssh hoshilab</code> で入り、新Mac側で下記を実行。</p>
+<div class="step">
+  <div class="cmd-wrap">
+    <pre class="cmd" data-cmd="curl -fsSL rojilab.github.io/dotfiles/setup -o setup
+bash setup">curl -fsSL rojilab.github.io/dotfiles/setup -o setup
+bash setup</pre>
+    <button class="copy">Copy</button>
+  </div>
+  <p class="note">Homebrew, Brewfile, macOS defaults, symlink 等のフル setup。Dropbox cask の GUI ログインだけは物理画面に戻る必要がある（同期完了後、もう一度 <code>bash setup</code> で symlink 張りが走る）。</p>
+</div>
+
+<h2>オプション</h2>
+<div class="step">
+  <div class="cmd-wrap">
+    <pre class="cmd" data-cmd="bash setup -a   # + admin packages (sudo)
+bash setup -x   # + extended packages
+bash setup -f   # + Thunderbird/Stylus checks">bash setup -a   # + admin packages (sudo)
+bash setup -x   # + extended packages
+bash setup -f   # + Thunderbird/Stylus checks</pre>
+    <button class="copy">Copy</button>
+  </div>
+</div>
+
+<script>
+document.querySelectorAll('.copy').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const pre = btn.previousElementSibling;
+    const text = pre.dataset.cmd;
+    navigator.clipboard.writeText(text).then(() => {
+      btn.textContent = 'Copied!';
+      btn.classList.add('copied');
+      setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1500);
+    }).catch(() => {
+      // fallback: select the text
+      const range = document.createRange();
+      range.selectNodeContents(pre);
+      window.getSelection().removeAllRanges();
+      window.getSelection().addRange(range);
+    });
+  });
+});
+</script>
 </body>
 </html>
