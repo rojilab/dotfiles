@@ -1,12 +1,17 @@
 #!/bin/bash
 # setup-stage1: 新Mac物理操作の最小スクリプト（idempotent）
 #
-# 目的: SSH (Remote Login) を有効化し、ホスト名を hoshilab に設定する。
-#       これだけ走らせれば、以降は別マシンから ssh 越しに setup (stage2) を
-#       進められる。新Mac の物理画面の前で行う作業はこれだけ。
+# 目的: ホスト名を hoshilab に設定する。
+#
+# 前提: 「リモートログイン (SSH)」はあらかじめ GUI で有効化しておくこと。
+#       システム設定 → 一般 → 共有 → リモートログイン を ON
+#
+#       macOS Tahoe 以降は systemsetup -setremotelogin on が
+#       TCC/プライバシー要件で必ずしも反映されないため、
+#       SSH 有効化は GUI に分離した（このスクリプトでは触らない）。
 #
 # Usage:
-#   curl -fsSL rojilab.github.io/dotfiles/setup-stage1 > setup-stage1
+#   curl -fsSL rojilab.github.io/dotfiles/setup-stage1 -o setup-stage1
 #   bash setup-stage1
 #
 # 別ホスト名にしたい場合:
@@ -18,18 +23,9 @@ set -e
 
 HOSTNAME_TARGET="${HOSTNAME_TARGET:-hoshilab}"
 
-echo "=== setup-stage1: SSH + Hostname (target: $HOSTNAME_TARGET) ==="
+echo "=== setup-stage1: Hostname (target: $HOSTNAME_TARGET) ==="
 
-# 1. SSH (Remote Login) 有効化
-current_ssh=$(sudo systemsetup -getremotelogin 2>/dev/null | awk '{print $NF}')
-if [ "$current_ssh" = "On" ]; then
-    echo "  SSH (Remote Login): On (already enabled)"
-else
-    echo "→ SSH (Remote Login) を有効化..."
-    sudo systemsetup -setremotelogin on
-fi
-
-# 2. ホスト名設定 (3種類: ComputerName / LocalHostName / HostName)
+# ホスト名設定 (3種類: ComputerName / LocalHostName / HostName)
 set_hostname() {
     local key="$1"
     local current
@@ -45,25 +41,32 @@ set_hostname ComputerName
 set_hostname LocalHostName
 set_hostname HostName
 
-# 3. 確認
+# 確認
 echo ""
 echo "=== 確認 ==="
 echo "ComputerName : $(scutil --get ComputerName)"
 echo "LocalHostName: $(scutil --get LocalHostName)"
 echo "HostName     : $(scutil --get HostName)"
-sudo systemsetup -getremotelogin
 
+# SSH の状態を情報として表示（有効化はしない）
 echo ""
-echo "ローカルIP:"
-for iface in en0 en1 en2; do
+ssh_status=$(sudo systemsetup -getremotelogin 2>/dev/null | awk '{print $NF}')
+echo "Remote Login (SSH): $ssh_status"
+
+# IPアドレス
+echo ""
+echo "このマシンの IP アドレス:"
+for iface in en0 en1 en2 en3; do
     ip=$(ifconfig "$iface" 2>/dev/null | awk '/inet /{print $2}')
     [ -n "$ip" ] && echo "  $iface: $ip"
 done
 
 echo ""
-echo "✓ setup-stage1 完了。別マシンから下記で接続できるはず:"
-echo "  ssh $(whoami)@${HOSTNAME_TARGET}.local"
-echo ""
-echo "次のステップ (別マシンから ssh で入った後):"
-echo "  curl -fsSL rojilab.github.io/dotfiles/setup > setup"
-echo "  bash setup"
+if [ "$ssh_status" != "On" ]; then
+    echo "⚠ SSH が無効です。"
+    echo "  システム設定 → 一般 → 共有 → リモートログイン を ON にしてください。"
+    echo "  (このスクリプトは SSH を有効化しません)"
+else
+    echo "✓ setup-stage1 完了。別マシンから下記で接続できるはず:"
+    echo "  ssh $(whoami)@<上記の IP>"
+fi

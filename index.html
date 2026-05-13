@@ -3,54 +3,100 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>rojilab/dotfiles — Mac setup</title>
+<title>rojilab/dotfiles — 新Macセットアップ</title>
 <style>
-body { font-family: -apple-system, "Hiragino Sans", "Hiragino Kaku Gothic ProN", sans-serif; max-width: 740px; margin: 50px auto; padding: 0 20px; color: #1a1a1a; line-height: 1.65; }
-h1 { font-size: 28px; margin: 0 0 8px; }
-h2 { font-size: 19px; margin: 32px 0 8px; padding-bottom: 6px; border-bottom: 1px solid #ddd; }
-.meta { color: #666; font-size: 14px; margin-bottom: 20px; }
-.step { margin: 14px 0 18px; }
-.cmd-wrap { position: relative; }
-.cmd { background: #f4f4f4; border-radius: 6px; padding: 14px 16px; padding-right: 76px; font-family: "SF Mono", Menlo, monospace; font-size: 14px; white-space: pre; overflow-x: auto; }
+:root { --fg:#1a1a1a; --muted:#666; --rule:#ddd; --code-bg:#f4f4f4; --info:#2563eb; --info-bg:#eff6ff; --warn:#d97706; --warn-bg:#fffbeb; --ok:#16a34a; --ok-bg:#f0fdf4; }
+body { font-family: -apple-system, "Hiragino Sans", "Hiragino Kaku Gothic ProN", sans-serif; max-width: 760px; margin: 48px auto; padding: 0 20px; color: var(--fg); line-height: 1.7; }
+h1 { font-size: 28px; margin: 0 0 6px; }
+.lede { color: var(--muted); font-size: 14px; margin-bottom: 28px; }
+.step { margin: 36px 0 12px; padding: 18px 22px; border: 1px solid var(--rule); border-radius: 10px; background: #fff; }
+.step h2 { font-size: 19px; margin: 0 0 10px; padding-bottom: 8px; border-bottom: 1px solid var(--rule); }
+.step h2 .num { display: inline-block; background: var(--info); color: #fff; font-size: 13px; padding: 2px 9px; border-radius: 999px; margin-right: 8px; vertical-align: 2px; }
+.step h2 .where { color: var(--muted); font-size: 14px; font-weight: 400; margin-left: 6px; }
+.step p { margin: 8px 0; }
+ol.gui { margin: 8px 0; padding-left: 22px; }
+ol.gui li { margin: 4px 0; }
+kbd { background: #eee; padding: 2px 8px; border-radius: 4px; font-size: 13px; font-family: -apple-system, sans-serif; border: 1px solid #ccc; box-shadow: 0 1px 0 #bbb; }
+code { background: #eee; padding: 1px 6px; border-radius: 3px; font-size: 13px; font-family: "SF Mono", Menlo, monospace; }
+.cmd-wrap { position: relative; margin: 12px 0; }
+.cmd { background: var(--code-bg); border-radius: 6px; padding: 14px 16px; padding-right: 76px; font-family: "SF Mono", Menlo, monospace; font-size: 13.5px; white-space: pre; overflow-x: auto; margin: 0; }
 .copy { position: absolute; top: 8px; right: 8px; background: #fff; border: 1px solid #ccc; border-radius: 4px; padding: 5px 11px; font-size: 12px; cursor: pointer; font-family: inherit; }
 .copy:hover { background: #f8f8f8; }
 .copy:active { background: #eee; }
 .copy.copied { background: #c6f6d5; border-color: #38a169; color: #22543d; }
-.note { color: #555; font-size: 14px; margin: 8px 0 0; }
-code { background: #eee; padding: 1px 6px; border-radius: 3px; font-size: 13px; }
+.callout { border-left: 4px solid var(--rule); padding: 10px 14px; margin: 12px 0; border-radius: 0 6px 6px 0; font-size: 14px; }
+.callout.info { border-color: var(--info); background: var(--info-bg); }
+.callout.warn { border-color: var(--warn); background: var(--warn-bg); }
+.callout.ok   { border-color: var(--ok); background: var(--ok-bg); }
+.callout .label { font-weight: 700; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; margin-right: 6px; }
+.callout.info .label { color: var(--info); }
+.callout.warn .label { color: var(--warn); }
+.callout.ok   .label { color: var(--ok); }
+.fill { background: #fffaa3; padding: 0 4px; border-radius: 2px; font-family: "SF Mono", Menlo, monospace; }
 </style>
 </head>
 <body>
 
 <h1>新Mac セットアップ</h1>
-<p class="meta">2段階運用 — 両ステップとも冪等。Safariでこのページを開きつつ、Terminalで上から順にCopy→⌘Vで実行する。</p>
+<p class="lede">3ステップ。Step 1 と 2 は新Mac の前で。Step 3 以降は別マシンから ssh 越しで進められる。</p>
 
-<h2>Stage 1 — 物理画面で（SSH + ホスト名）</h2>
-<p>新Mac の Terminal で実行。途中で sudo パスワードを聞かれるので、ログインパスワードを入力。</p>
 <div class="step">
+  <h2><span class="num">1</span>リモートログインを ON にする<span class="where">— 新Macの GUI</span></h2>
+  <p>新Mac で <strong>システム設定</strong> を開き、リモートログインを有効化する。</p>
+  <ol class="gui">
+    <li>メニューバー左上の <strong>Appleマーク</strong> → <strong>システム設定</strong></li>
+    <li>左のサイドバーで <strong>一般</strong> → <strong>共有</strong></li>
+    <li><strong>リモートログイン</strong> のトグルを <strong>ON</strong></li>
+    <li>「アクセス」は <strong>すべてのユーザ</strong> または <strong>管理者のみ</strong> でOK</li>
+  </ol>
+  <div class="callout info"><span class="label">なぜ</span>
+    macOS Tahoe 以降、ターミナルから <code>systemsetup -setremotelogin on</code> を叩いても TCC/プライバシー要件で反映されない場合があるため、GUI で先に有効化する。
+  </div>
+</div>
+
+<div class="step">
+  <h2><span class="num">2</span>ホスト名を hoshilab に<span class="where">— 新Macのターミナル</span></h2>
+  <p>新Mac で <strong>ターミナル</strong> を開き（<kbd>⌘ Space</kbd> → 「ターミナル」）、下の Copy ボタンを押してターミナルで <kbd>⌘V</kbd> + <kbd>Enter</kbd>。途中で sudo パスワードを聞かれるのでログインパスワードを入力。</p>
   <div class="cmd-wrap">
     <pre class="cmd" data-cmd="curl -fsSL rojilab.github.io/dotfiles/setup-stage1 -o setup-stage1
 bash setup-stage1">curl -fsSL rojilab.github.io/dotfiles/setup-stage1 -o setup-stage1
 bash setup-stage1</pre>
     <button class="copy">Copy</button>
   </div>
-  <p class="note">SSH (Remote Login) を有効化し、ホスト名を <code>hoshilab</code> に設定する。完了したら別マシンから <code>ssh &lt;username&gt;@hoshilab.local</code> で入れる。</p>
+  <p>実行後、最後に表示される <code>このマシンの IP アドレス</code> をメモする（次のステップで別マシンから接続するため）。</p>
 </div>
 
-<h2>Stage 2 — 別マシンから ssh で入って</h2>
-<p>Stage 1 完了後、別マシン（td2026 等）から <code>ssh hoshilab</code> で入り、新Mac側で下記を実行。</p>
 <div class="step">
+  <h2><span class="num">3</span>別マシンから ssh で入って setup<span class="where">— td2026 など別マシン</span></h2>
+  <p>td2026 等の別マシンのターミナルで以下を実行。<span class="fill">&lt;NEW_IP&gt;</span> を Step 2 でメモした新MacのIPに置き換える。</p>
+
+  <p><strong>3a. 公開鍵を新Macに送る</strong>（初回のみ。新Mac のパスワードを入力）</p>
+  <div class="cmd-wrap">
+    <pre class="cmd" data-cmd="ssh-copy-id -i ~/.ssh/id_ed25519_eto.pub lab@<NEW_IP>">ssh-copy-id -i ~/.ssh/id_ed25519_eto.pub lab@&lt;NEW_IP&gt;</pre>
+    <button class="copy">Copy</button>
+  </div>
+
+  <p><strong>3b. ssh で新Macに入る</strong></p>
+  <div class="cmd-wrap">
+    <pre class="cmd" data-cmd="ssh lab@<NEW_IP>">ssh lab@&lt;NEW_IP&gt;</pre>
+    <button class="copy">Copy</button>
+  </div>
+
+  <p><strong>3c. 新Mac内で setup を実行</strong>（Homebrew, Brewfile, macOS defaults などのフルセットアップ）</p>
   <div class="cmd-wrap">
     <pre class="cmd" data-cmd="curl -fsSL rojilab.github.io/dotfiles/setup -o setup
 bash setup">curl -fsSL rojilab.github.io/dotfiles/setup -o setup
 bash setup</pre>
     <button class="copy">Copy</button>
   </div>
-  <p class="note">Homebrew, Brewfile, macOS defaults, symlink 等のフル setup。Dropbox cask の GUI ログインだけは物理画面に戻る必要がある（同期完了後、もう一度 <code>bash setup</code> で symlink 張りが走る）。</p>
+
+  <div class="callout info"><span class="label">途中で物理画面に戻る</span>
+    Dropbox cask のインストール後、<strong>GUI でDropboxにログイン</strong>が必要。同期完了後、もう一度 <code>bash setup</code> を実行すると symlink 張りが走る。
+  </div>
 </div>
 
-<h2>オプション</h2>
 <div class="step">
+  <h2>オプション（setup フラグ）</h2>
   <div class="cmd-wrap">
     <pre class="cmd" data-cmd="bash setup -a   # + admin packages (sudo)
 bash setup -x   # + extended packages
@@ -71,7 +117,6 @@ document.querySelectorAll('.copy').forEach(btn => {
       btn.classList.add('copied');
       setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1500);
     }).catch(() => {
-      // fallback: select the text
       const range = document.createRange();
       range.selectNodeContents(pre);
       window.getSelection().removeAllRanges();
