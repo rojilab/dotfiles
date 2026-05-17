@@ -442,68 +442,76 @@ configure_dock() {
   log "Configuring Dock..."
   command -v dockutil &>/dev/null || { echo "  dockutil not found, skipping"; return 0; }
 
-  local dock
-  dock=$(dockutil --list 2>/dev/null) || return 0
-  local dock_modified=0
+  # Desired apps in order (pro2026 と同じ並び、2026-05-17 時点)
+  # 「インストール済みのみを採用 → 全 remove → 順番に add」方式で並びを厳密に再現
+  local desired_apps=(
+    "/System/Applications/Apps.app"
+    "/System/Applications/Utilities/Activity Monitor.app"
+    "/System/Applications/Utilities/Terminal.app"
+    "/Applications/iTerm.app"
+    "/Applications/Ghostty.app"
+    "/Applications/Emacs.app"
+    "/Applications/Thunderbird.app"
+    "/Applications/Comet.app"
+    "/Applications/Google Chrome.app"
+    "/Applications/Microsoft Edge.app"
+    "/Applications/Microsoft Edge Beta.app"
+    "/System/Volumes/Preboot/Cryptexes/App/System/Applications/Safari.app"
+    "/Applications/Codex.app"
+    "/Applications/ChatGPT Atlas.app"
+    "/Applications/Claude.app"
+    "/System/Applications/FindMy.app"
+    "/System/Applications/VoiceMemos.app"
+    "/Applications/SwitchBot.app"
+    "/Applications/WiFi Explorer.app"
+  )
 
-  # Remove unwanted default icons
-  for app in \
-    "メッセージ" "メール" "マップ" "FaceTime" \
-    "連絡先" "フリーボード" "TV" "ミュージック" "App Store" "システム設定"; do
-    if echo "$dock" | grep -q "$app"; then
-      dockutil --remove "$app" --no-restart 2>/dev/null && dock_modified=1
-    fi
-  done
-
-  # Desired apps in order
-  # dockutil --add appends at the end; --after specifies position
-  local prev=""
-  for app in \
-    "/System/Applications/Utilities/Activity Monitor.app" \
-    "/System/Applications/Utilities/Terminal.app" \
-    "/Applications/iTerm.app" \
-    "/Applications/kitty.app" \
-    "/Applications/Ghostty.app" \
-    "/Applications/Emacs.app" \
-    "/Applications/Thunderbird.app" \
-    "/Applications/Comet.app" \
-    "/Applications/Google Chrome.app" \
-    "/Applications/Microsoft Edge.app" \
-    "/System/Volumes/Preboot/Cryptexes/App/System/Applications/Safari.app" \
-    "/Applications/Firefox.app" \
-    "/Applications/Opera.app" \
-    "/Applications/Brave Browser.app" \
-    "/Applications/LINE.app" \
-    "/Applications/Claude.app" \
-    "/Applications/Antigravity.app" \
-    "/System/Applications/Photos.app" \
-    "/System/Applications/FindMy.app" \
-    "/System/Applications/VoiceMemos.app" \
-    "/Applications/SwitchBot.app" \
-    "/System/Applications/Notes.app" \
-    "/System/Applications/Reminders.app" \
-    "/System/Applications/Calendar.app" \
-    "/Applications/WiFi Explorer.app"; do
+  # 期待する順序の bundle path 列を生成 (インストール済みのみ)
+  local expected_paths=()
+  for app in "${desired_apps[@]}"; do
     [ -d "$app" ] || continue
-    local bname
-    bname=$(basename "$app")
-    local encoded=${bname// /%20}
-    if echo "$dock" | grep -qE "$bname|$encoded"; then
-      prev="$bname"
-      continue
-    fi
-    if [ -n "$prev" ]; then
-      dockutil --add "$app" --after "$prev" --no-restart 2>/dev/null && dock_modified=1
-    else
-      dockutil --add "$app" --no-restart 2>/dev/null && dock_modified=1
-    fi
-    echo "  Dock add: $bname"
-    prev="$bname"
+    expected_paths+=("$app")
   done
 
-  if [ "$dock_modified" = 1 ]; then
-    killall Dock 2>/dev/null || true
+  # dockutil --list は TAB 区切りで "<label>\t<url>\t<category>\t<plist>\t<bundle-id>"。
+  # persistentApps のみ抽出（recentApps / persistentOthers は除外）。
+  local current_list
+  current_list=$(dockutil --list 2>/dev/null) || return 0
+  local current_paths=()
+  while IFS=$'\t' read -r _label url category _rest; do
+    [ "$category" = "persistentApps" ] || continue
+    local path="${url#file://}"
+    path="${path%/}"
+    path="${path//%20/ }"
+    current_paths+=("$path")
+  done <<< "$current_list"
+
+  # 期待列と現状列を比較
+  local same=1
+  if [ "${#current_paths[@]}" != "${#expected_paths[@]}" ]; then
+    same=0
+  else
+    local i
+    for i in "${!expected_paths[@]}"; do
+      if [ "${current_paths[$i]}" != "${expected_paths[$i]}" ]; then
+        same=0
+        break
+      fi
+    done
   fi
+
+  if [ "$same" = 1 ]; then
+    log "Dock: already in desired order"
+    return 0
+  fi
+
+  log "Dock: rebuilding to match desired order"
+  dockutil --remove all --no-restart 2>/dev/null || true
+  for app in "${expected_paths[@]}"; do
+    dockutil --add "$app" --no-restart 2>/dev/null || echo "  failed: $(basename "$app")"
+    echo "  added: $(basename "$app")"
+  done
+  killall Dock 2>/dev/null || true
 }
 
 # ============================================================ 9. Wallpaper
@@ -715,6 +723,7 @@ cask "chatgpt"
 cask "arc"
 cask "chatgpt-atlas"
 cask "claude"
+cask "codex-app"
 cask "comet"
 cask "copilot-cli"
 cask "opera"
@@ -732,6 +741,7 @@ cask "whatsapp"
 cask "visual-studio-code"
 cask "blender"
 cask "microsoft-edge"
+cask "microsoft-edge@beta"
 cask "webex"
 cask "disk-drill"
 cask "brave-browser"
